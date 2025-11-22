@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Hypergeometric Surprise Explorer (Weaver SI)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Plotly for interactive charts -->
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: light dark;
+    }
+    body {
+      margin: 0;
+      padding: 1.5rem;
+      background: #0f172a;
+      color: #e5e7eb;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.6rem;
+    }
+    p {
+      margin: 0.2rem 0 0.5rem;
+      max-width: 800px;
+      font-size: 0.95rem;
+      color: #cbd5f5;
+    }
+    .app-container {
+      display: grid;
+      grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+      gap: 1.5rem;
+      align-items: flex-start;
+    }
+    .panel {
+      background: rgba(15, 23, 42, 0.9);
+      border-radius: 1rem;
+      padding: 1rem 1.2rem;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+    .panel h2 {
+      margin-top: 0;
+      font-size: 1.1rem;
+    }
+    .controls-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+    }
+    .control-row {
+      display: grid;
+      grid-template-columns: 70px 1fr 80px;
+      gap: 0.5rem;
+      align-items: center;
+      font-size: 0.9rem;
+    }
+    .control-row label {
+      font-weight: 600;
+      color: #e5e7eb;
+    }
+    .control-row input[type="range"] {
+      width: 100%;
+    }
+    .control-row input[type="number"] {
+      width: 100%;
+      padding: 0.2rem 0.4rem;
+      border-radius: 0.4rem;
+      border: 1px solid rgba(148, 163, 184, 0.5);
+      background: #020617;
+      color: #e5e7eb;
+    }
+    .hint {
+      font-size: 0.8rem;
+      color: #9ca3af;
+    }
+    #stats {
+      margin-top: 0.8rem;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      color: #e5e7eb;
+    }
+    #warning {
+      margin-top: 0.4rem;
+      font-size: 0.8rem;
+      color: #fbbf24;
+    }
+    #plot {
+      width: 100%;
+      height: 520px;
+    }
+    @media (max-width: 800px) {
+      .app-container {
+        grid-template-columns: 1fr;
+      }
+      #plot {
+        height: 480px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Hypergeometric Surprise Explorer</h1>
+    <p>
+      Explore Weaver's Surprise Index for a hypergeometric random variable
+      <code>Y ∼ Hypergeom(N, M, n)</code>, where:
+      <strong>N</strong> = population size, <strong>M</strong> = number of “successes” in the population,
+      and <strong>n</strong> = sample size without replacement.
+      For each possible outcome <code>y</code>, the Weaver Surprise Index is
+      <code>SI(y) = Σ p(y')² / p(y)</code>.
+    </p>
+  </header>
+
+  <div class="app-container">
+    <section class="panel">
+      <h2>Controls</h2>
+      <div class="controls-grid">
+        <div class="control-row">
+          <label for="NRange">N</label>
+          <input type="range" id="NRange" min="1" max="1000" value="100">
+          <input type="number" id="NInput" min="1" max="1000" value="100">
+        </div>
+        <div class="control-row">
+          <label for="MRange">M</label>
+          <input type="range" id="MRange" min="0" max="100" value="33">
+          <input type="number" id="MInput" min="0" max="1000" value="33">
+        </div>
+        <div class="control-row">
+          <label for="nRange">n</label>
+          <input type="range" id="nRange" min="0" max="100" value="25">
+          <input type="number" id="nInput" min="0" max="1000" value="25">
+        </div>
+      </div>
+      <div class="hint">
+        N = population size (≤ 1000). M = number of “successes” in the population (0 ≤ M ≤ N).
+        n = sample size (0 ≤ n ≤ N). Y counts the number of successes drawn.
+      </div>
+      <div id="warning"></div>
+      <div id="stats"></div>
+    </section>
+
+    <section class="panel">
+      <div id="plot"></div>
+    </section>
+  </div>
+
+  <script>
+    // ---------- Precompute log-factorials up to maxN ----------
+    const MAX_N = 1000;
+    const logFact = new Array(MAX_N + 1);
+    logFact[0] = 0.0;
+    for (let i = 1; i <= MAX_N; i++) {
+      logFact[i] = logFact[i - 1] + Math.log(i);
+    }
+
+    function logChoose(n, k) {
+      if (k < 0 || k > n) return -Infinity;
+      return logFact[n] - logFact[k] - logFact[n - k];
+    }
+
+    // Compute pmf & Weaver Surprise Index for given N, M, n
+    function computeDistribution(N, M, n) {
+      const warningMessages = [];
+
+      if (N < 1 || N > MAX_N) {
+        warningMessages.push(`N must be between 1 and ${MAX_N}.`);
+      }
+      if (M < 0 || M > N) {
+        warningMessages.push("M must satisfy 0 ≤ M ≤ N.");
+      }
+      if (n < 0 || n > N) {
+        warningMessages.push("n must satisfy 0 ≤ n ≤ N.");
+      }
+      if (warningMessages.length > 0) {
+        return { warning: warningMessages.join(" "), valid: false };
+      }
+
+      // Support of Y
+      const yMin = Math.max(0, n - (N - M));
+      const yMax = Math.min(n, M);
+
+      const yValues = [];
+      const logProbs = [];
+
+      const logDen = logChoose(N, n);
+      let maxLogProb = -Infinity;
+
+      for (let y = yMin; y <= yMax; y++) {
+        const logNum = logChoose(M, y) + logChoose(N - M, n - y);
+        const lp = logNum - logDen;
+        yValues.push(y);
+        logProbs.push(lp);
+        if (lp > maxLogProb) maxLogProb = lp;
+      }
+
+      // Convert from log-space, normalise
+      const probs = [];
+      let sumProb = 0;
+      for (let i = 0; i < logProbs.length; i++) {
+        const p = Math.exp(logProbs[i] - maxLogProb); // scaled
+        probs.push(p);
+        sumProb += p;
+      }
+      if (sumProb === 0 || !isFinite(sumProb)) {
+        return {
+          warning: "Numerical issue: probabilities collapsed to zero. Try smaller N or different parameters.",
+          valid: false
+        };
+      }
+      for (let i = 0; i < probs.length; i++) {
+        probs[i] /= sumProb;
+      }
+
+      // Mode: y with highest probability
+      let modeIndex = 0;
+      let maxProb = probs[0];
+      for (let i = 1; i < probs.length; i++) {
+        if (probs[i] > maxProb) {
+          maxProb = probs[i];
+          modeIndex = i;
+        }
+      }
+      const modeY = yValues[modeIndex];
+
+      // Mean and integer "expected" outcome
+      const mean = (n * M) / N;
+      const expectedInt = Math.round(mean);
+
+      // Weaver Surprise Index: SI(y) = sum_k p_k^2 / p_y
+      let rho = 0;
+      for (let i = 0; i < probs.length; i++) {
+        rho += probs[i] * probs[i];
+      }
+      const SI = probs.map(p => rho / p);
+      const log10SI = SI.map(s => Math.log(s) / Math.LN10);
+
+      return {
+        valid: true,
+        warning: null,
+        yValues,
+        probs,
+        log10SI,
+        mean,
+        expectedInt,
+        modeY,
+        yMin,
+        yMax
+      };
+    }
+
+    // Sync slider + number inputs
+    function syncInputs(rangeEl, numberEl, min, max) {
+      const clamp = (v) => Math.min(Math.max(v, min), max);
+      rangeEl.addEventListener("input", () => {
+        const v = clamp(parseInt(rangeEl.value, 10) || min);
+        rangeEl.value = v;
+        numberEl.value = v;
+        updateAll();
+      });
+      numberEl.addEventListener("input", () => {
+        const v = clamp(parseInt(numberEl.value, 10) || min);
+        numberEl.value = v;
+        rangeEl.value = v;
+        updateAll();
+      });
+    }
+
+    function getParams() {
+      const N = parseInt(document.getElementById("NInput").value, 10) || 1;
+      const M = parseInt(document.getElementById("MInput").value, 10) || 0;
+      const n = parseInt(document.getElementById("nInput").value, 10) || 0;
+      return { N, M, n };
+    }
+
+    // Enforce basic constraints and reflect back into inputs/sliders
+    function enforceConstraints(params) {
+      let { N, M, n } = params;
+
+      if (N < 1) N = 1;
+      if (N > MAX_N) N = MAX_N;
+
+      if (M < 0) M = 0;
+      if (M > N) M = N;
+
+      if (n < 0) n = 0;
+      if (n > N) n = N;
+
+      // Update sliders' max based on N
+      document.getElementById("MRange").max = N;
+      document.getElementById("MInput").max = N;
+      document.getElementById("nRange").max = N;
+      document.getElementById("nInput").max = N;
+
+      document.getElementById("NRange").value = N;
+      document.getElementById("NInput").value = N;
+      document.getElementById("MRange").value = M;
+      document.getElementById("MInput").value = M;
+      document.getElementById("nRange").value = n;
+      document.getElementById("nInput").value = n;
+
+      return { N, M, n };
+    }
+
+    function updateAll() {
+      const warningDiv = document.getElementById("warning");
+      const statsDiv = document.getElementById("stats");
+
+      let params = getParams();
+      params = enforceConstraints(params);
+
+      const { N, M, n } = params;
+
+      const result = computeDistribution(N, M, n);
+
+      if (!result.valid) {
+        warningDiv.textContent = result.warning || "Invalid parameter combination.";
+        statsDiv.textContent = "";
+        Plotly.purge("plot");
+        return;
+      } else {
+        warningDiv.textContent = "";
+      }
+
+      const {
+        yValues,
+        probs,
+        log10SI,
+        mean,
+        expectedInt,
+        modeY,
+        yMin,
+        yMax
+      } = result;
+
+      // Stats summary text
+      const equalNote = (expectedInt === modeY)
+        ? "The rounded expected outcome coincides with the mode, so it is also the least surprising outcome (in Weaver's sense)."
+        : "Here the rounded expected outcome and the mode differ slightly, but the mode is still the least surprising value.";
+
+      statsDiv.innerHTML = `
+        <strong>Parameters:</strong>
+        N = ${N}, M = ${M}, n = ${n}<br>
+        <strong>Support of Y:</strong> y = ${yMin} to ${yMax}<br>
+        <strong>Mean:</strong> E[Y] = ${mean.toFixed(3)}<br>
+        <strong>Rounded expected outcome:</strong> y = ${expectedInt}<br>
+        <strong>Mode / least surprising outcome:</strong> y = ${modeY}<br>
+        <span>${equalNote}</span>
+      `;
+
+      // Build Plotly traces
+      const maxProb = Math.max.apply(null, probs);
+
+      const probTrace = {
+        x: yValues,
+        y: probs,
+        type: "bar",
+        name: "Pr(Y = y)",
+        marker: { opacity: 0.75 }
+      };
+
+      const SITrace = {
+        x: yValues,
+        y: log10SI,
+        type: "scatter",
+        mode: "lines+markers",
+        name: "log10(SI(y))",
+        yaxis: "y2"
+      };
+
+      const modeTrace = {
+        x: [modeY],
+        y: [maxProb],
+        type: "scatter",
+        mode: "markers",
+        name: "Mode / least surprising",
+        marker: {
+          size: 11,
+          symbol: "circle",
+          line: { width: 1 }
+        }
+      };
+
+      const expectedLine = {
+        x: [mean, mean],
+        y: [0, maxProb],
+        type: "scatter",
+        mode: "lines",
+        name: "E[Y]",
+        line: {
+          dash: "dash",
+          width: 2
+        }
+      };
+
+      const expectedIntMarker = {
+        x: [expectedInt],
+        y: [0],
+        type: "scatter",
+        mode: "markers",
+        name: "Rounded E[Y]",
+        marker: {
+          size: 10,
+          symbol: "x"
+        }
+      };
+
+      const data = [probTrace, SITrace, modeTrace, expectedLine, expectedIntMarker];
+
+      const layout = {
+        title: {
+          text: "Probability & Weaver Surprise Index for Y ∼ Hypergeom(N, M, n)",
+          x: 0.02,
+          font: { size: 16 }
+        },
+        xaxis: {
+          title: "y = number of successes in the sample",
+          zeroline: false
+        },
+        yaxis: {
+          title: "Pr(Y = y)",
+          rangemode: "tozero"
+        },
+        yaxis2: {
+          title: "log10(Surprise Index)",
+          overlaying: "y",
+          side: "right",
+          zeroline: false
+        },
+        legend: {
+          orientation: "h",
+          x: 0,
+          y: 1.12
+        },
+        margin: { t: 70, r: 70, b: 60, l: 60 },
+        paper_bgcolor: "rgba(15, 23, 42, 1)",
+        plot_bgcolor: "rgba(15, 23, 42, 1)",
+        font: { color: "#e5e7eb" }
+      };
+
+      Plotly.react("plot", data, layout, {responsive: true});
+    }
+
+    // Initialise UI
+    document.addEventListener("DOMContentLoaded", () => {
+      const NRange = document.getElementById("NRange");
+      const NInput = document.getElementById("NInput");
+      const MRange = document.getElementById("MRange");
+      const MInput = document.getElementById("MInput");
+      const nRange = document.getElementById("nRange");
+      const nInput = document.getElementById("nInput");
+
+      syncInputs(NRange, NInput, 1, MAX_N);
+      syncInputs(MRange, MInput, 0, MAX_N);
+      syncInputs(nRange, nInput, 0, MAX_N);
+
+      // Initial plot
+      updateAll();
+    });
+  </script>
+</body>
+</html>
