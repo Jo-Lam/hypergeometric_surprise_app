@@ -32,7 +32,7 @@
     }
     .app-container {
       display: grid;
-      grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+      grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
       gap: 1.5rem;
       align-items: flex-start;
     }
@@ -89,6 +89,17 @@
       font-size: 0.8rem;
       color: #fbbf24;
     }
+    #si-guide {
+      margin-top: 0.8rem;
+      font-size: 0.8rem;
+      color: #9ca3af;
+      border-top: 1px solid rgba(148, 163, 184, 0.3);
+      padding-top: 0.6rem;
+    }
+    #si-guide ul {
+      margin: 0.3rem 0 0;
+      padding-left: 1.1rem;
+    }
     #plot {
       width: 100%;
       height: 520px;
@@ -111,7 +122,7 @@
       <code>Y ∼ Hypergeom(N, M, n)</code>, where:
       <strong>N</strong> = population size, <strong>M</strong> = number of “successes” in the population,
       and <strong>n</strong> = sample size without replacement.
-      For each possible outcome <code>y</code>, the Weaver Surprise Index is
+      For each outcome <code>y</code>, the Weaver Surprise Index is
       <code>SI(y) = Σ p(y')² / p(y)</code>.
     </p>
   </header>
@@ -142,6 +153,17 @@
       </div>
       <div id="warning"></div>
       <div id="stats"></div>
+
+      <div id="si-guide">
+        <strong>Weaver SI interpretation (rules of thumb)</strong>
+        <ul>
+          <li><code>SI &lt; 5</code>: Not surprising</li>
+          <li><code>SI ≈ 10</code>: Begins to be surprising</li>
+          <li><code>SI ≈ 1,000</code>: Definitely surprising</li>
+          <li><code>SI ≈ 1,000,000</code>: Very surprising</li>
+          <li><code>SI ≈ 10¹²</code>: “Miracle!”</li>
+        </ul>
+      </div>
     </section>
 
     <section class="panel">
@@ -161,6 +183,16 @@
     function logChoose(n, k) {
       if (k < 0 || k > n) return -Infinity;
       return logFact[n] - logFact[k] - logFact[n - k];
+    }
+
+    // Map SI value to qualitative label
+    function classifySI(s) {
+      if (!isFinite(s) || s <= 0) return "undefined";
+      if (s < 5) return "Not surprising";
+      if (s < 1e3) return "Begins to be surprising (≈10)";
+      if (s < 1e6) return "Definitely surprising (≈1,000)";
+      if (s < 1e12) return "Very surprising (≈1,000,000)";
+      return "Miracle! (≈10¹² or more)";
     }
 
     // Compute pmf & Weaver Surprise Index for given N, M, n
@@ -244,6 +276,7 @@
         warning: null,
         yValues,
         probs,
+        SI,
         log10SI,
         mean,
         expectedInt,
@@ -329,6 +362,7 @@
       const {
         yValues,
         probs,
+        SI,
         log10SI,
         mean,
         expectedInt,
@@ -337,10 +371,20 @@
         yMax
       } = result;
 
-      // Stats summary text
+      // Helper: find SI at a specific y (if in support)
+      const idxMode = yValues.indexOf(modeY);
+      const siMode = idxMode >= 0 ? SI[idxMode] : NaN;
+
+      const idxExp = yValues.indexOf(expectedInt);
+      const siExp = idxExp >= 0 ? SI[idxExp] : NaN;
+
       const equalNote = (expectedInt === modeY)
         ? "The rounded expected outcome coincides with the mode, so it is also the least surprising outcome (in Weaver's sense)."
         : "Here the rounded expected outcome and the mode differ slightly, but the mode is still the least surprising value.";
+
+      const expText = isFinite(siExp)
+        ? `<strong>SI at rounded expected outcome y = ${expectedInt}:</strong> ${siExp.toExponential(3)} (${classifySI(siExp)})<br>`
+        : `<strong>SI at rounded expected outcome:</strong> not defined (that y is outside the support of Y)<br>`;
 
       statsDiv.innerHTML = `
         <strong>Parameters:</strong>
@@ -349,6 +393,8 @@
         <strong>Mean:</strong> E[Y] = ${mean.toFixed(3)}<br>
         <strong>Rounded expected outcome:</strong> y = ${expectedInt}<br>
         <strong>Mode / least surprising outcome:</strong> y = ${modeY}<br>
+        <strong>SI at mode y = ${modeY}:</strong> ${siMode.toExponential(3)} (${classifySI(siMode)})<br>
+        ${expText}
         <span>${equalNote}</span>
       `;
 
